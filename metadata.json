@@ -1,0 +1,6 @@
+{
+  "name": "MotoSpeed - Velocímetro & Rutas GPS",
+  "description": "Velocímetro visual y deportivo para motos con registro de velocidades, mapas de recorrido GPS, estadísticas de viaje y soporte portrait y landscape.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,22 @@
+<resources>
+    <string name="app_name">MotoSpeed</string>
+    <string name="title_speedometer">Velocímetro</string>
+    <string name="title_map">Mapa de Recorrido</string>
+    <string name="title_history">Historial de Rutas</string>
+    <string name="title_settings">Ajustes</string>
+    <string name="start_trip">Iniciar Ruta</string>
+    <string name="pause_trip">Pausar</string>
+    <string name="resume_trip">Reanudar</string>
+    <string name="finish_trip">Finalizar y Guardar</string>
+    <string name="unit_kmh">km/h</string>
+    <string name="unit_km">km</string>
+    <string name="current_speed">Velocidad Actual</string>
+    <string name="max_speed">Vel. Máxima</string>
+    <string name="avg_speed">Vel. Promedio</string>
+    <string name="trip_distance">Distancia</string>
+    <string name="trip_time">Tiempo</string>
+    <string name="hud_mode">Modo HUD (Reflejo)</string>
+    <string name="location_permission_required">Permiso de ubicación necesario para registrar velocidad y mapa GPS</string>
+    <string name="grant_permission">Conceder Permiso</string>
+    <string name="trip_saved_successfully">Ruta guardada exitosamente</string>
+</resources>
