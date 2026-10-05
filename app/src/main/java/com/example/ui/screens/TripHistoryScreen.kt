@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.ElectricMeter
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Route
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material.icons.filled.Timer
@@ -45,11 +46,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -70,6 +73,8 @@ import com.example.ui.theme.RacingRed
 import com.example.ui.theme.SpeedAmber
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
+import com.example.ui.util.RouteImageShareHelper
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -86,6 +91,8 @@ fun TripHistoryScreen(
     onStartNewRide: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     var tripToDelete by remember { mutableStateOf<TripEntity?>(null) }
 
     if (tripToDelete != null) {
@@ -170,7 +177,13 @@ fun TripHistoryScreen(
                 TripHistoryItemCard(
                     trip = trip,
                     onClick = { onSelectTrip(trip) },
-                    onDelete = { tripToDelete = trip }
+                    onDelete = { tripToDelete = trip },
+                    onShare = {
+                        val points = onParsePoints(trip)
+                        coroutineScope.launch {
+                            RouteImageShareHelper.shareTripImage(context, trip, points)
+                        }
+                    }
                 )
             }
         }
@@ -278,7 +291,8 @@ fun TotalStatsBanner(
 fun TripHistoryItemCard(
     trip: TripEntity,
     onClick: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onShare: () -> Unit
 ) {
     val dateStr = SimpleDateFormat("EEEE, d MMMM yyyy - HH:mm", Locale("es", "MX"))
         .format(Date(trip.startTime))
@@ -322,16 +336,30 @@ fun TripHistoryItemCard(
                     )
                 }
 
-                IconButton(
-                    onClick = onDelete,
-                    modifier = Modifier.size(32.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.DeleteOutline,
-                        contentDescription = "Eliminar ruta",
-                        tint = TextSecondary,
-                        modifier = Modifier.size(18.dp)
-                    )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(
+                        onClick = onShare,
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Share,
+                            contentDescription = "Compartir imagen de la ruta",
+                            tint = NeonCyan,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+
+                    IconButton(
+                        onClick = onDelete,
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.DeleteOutline,
+                            contentDescription = "Eliminar ruta",
+                            tint = TextSecondary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
             }
 
@@ -457,6 +485,9 @@ fun TripDetailDialog(
     onDismiss: () -> Unit,
     onDelete: () -> Unit
 ) {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+
     Dialog(onDismissRequest = onDismiss) {
         Card(
             shape = RoundedCornerShape(22.dp),
@@ -491,13 +522,30 @@ fun TripDetailDialog(
                         )
                     }
 
-                    IconButton(onClick = onDelete) {
-                        Icon(
-                            imageVector = Icons.Default.Delete,
-                            contentDescription = "Eliminar",
-                            tint = RacingRed,
-                            modifier = Modifier.size(20.dp)
-                        )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(
+                            onClick = {
+                                coroutineScope.launch {
+                                    RouteImageShareHelper.shareTripImage(context, trip, routePoints)
+                                }
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Share,
+                                contentDescription = "Compartir imagen",
+                                tint = NeonCyan,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        IconButton(onClick = onDelete) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = "Eliminar",
+                                tint = RacingRed,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
                     }
                 }
 
@@ -605,12 +653,33 @@ fun TripDetailDialog(
                 Spacer(modifier = Modifier.height(16.dp))
 
                 Button(
-                    onClick = onDismiss,
+                    onClick = {
+                        coroutineScope.launch {
+                            RouteImageShareHelper.shareTripImage(context, trip, routePoints)
+                        }
+                    },
                     colors = ButtonDefaults.buttonColors(containerColor = NeonCyan, contentColor = Color.Black),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("share_trip_detail_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Share,
+                        contentDescription = "Compartir imagen",
+                        modifier = Modifier.padding(end = 8.dp)
+                    )
+                    Text("Compartir Ruta en Imagen", fontWeight = FontWeight.Bold)
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                OutlinedButton(
+                    onClick = onDismiss,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("Cerrar Detalle", fontWeight = FontWeight.Bold)
+                    Text("Cerrar", color = TextPrimary)
                 }
             }
         }

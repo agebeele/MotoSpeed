@@ -10,10 +10,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -22,14 +25,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import com.example.data.model.TripEntity
 import com.example.location.GpsState
 import com.example.ui.theme.CockpitCardBorder
 import com.example.ui.theme.CockpitSurface
@@ -40,6 +46,8 @@ import com.example.ui.theme.RacingRed
 import com.example.ui.theme.SpeedAmber
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
+import com.example.ui.util.RouteImageShareHelper
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -51,6 +59,8 @@ fun SaveTripDialog(
     onSave: (title: String) -> Unit,
     onDiscard: () -> Unit
 ) {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     val defaultTitle = remember {
         val dateStr = SimpleDateFormat("dd MMM, HH:mm", Locale.getDefault()).format(Date())
         "Recorrido en Moto ($dateStr)"
@@ -157,7 +167,44 @@ fun SaveTripDialog(
                         .testTag("trip_title_input")
                 )
 
-                Spacer(modifier = Modifier.height(20.dp))
+                Spacer(modifier = Modifier.height(18.dp))
+
+                // Primary Action: Save and Share route image
+                Button(
+                    onClick = {
+                        val chosenTitle = titleText.ifBlank { defaultTitle }
+                        val tripEntity = TripEntity(
+                            title = chosenTitle,
+                            startTime = System.currentTimeMillis() - (gpsState.durationSeconds * 1000L),
+                            endTime = System.currentTimeMillis(),
+                            durationSeconds = gpsState.durationSeconds,
+                            distanceKm = gpsState.distanceKm,
+                            maxSpeedKmh = gpsState.maxSpeedKmh,
+                            avgSpeedKmh = gpsState.avgSpeedKmh,
+                            routePointsJson = ""
+                        )
+                        onSave(chosenTitle)
+                        coroutineScope.launch {
+                            RouteImageShareHelper.shareTripImage(context, tripEntity, gpsState.routePoints)
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = NeonCyan,
+                        contentColor = androidx.compose.ui.graphics.Color.Black
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("save_and_share_trip_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Share,
+                        contentDescription = "Compartir imagen",
+                        modifier = Modifier.padding(end = 8.dp)
+                    )
+                    Text("Guardar y Compartir Imagen", fontWeight = FontWeight.Bold)
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -173,17 +220,14 @@ fun SaveTripDialog(
                         Text("Descartar")
                     }
 
-                    Button(
+                    OutlinedButton(
                         onClick = { onSave(titleText.ifBlank { defaultTitle }) },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = NeonCyan,
-                            contentColor = androidx.compose.ui.graphics.Color.Black
-                        ),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary),
                         modifier = Modifier
-                            .weight(1.3f)
+                            .weight(1f)
                             .testTag("confirm_save_trip_button")
                     ) {
-                        Text("Guardar Ruta", fontWeight = FontWeight.Bold)
+                        Text("Solo Guardar")
                     }
                 }
             }

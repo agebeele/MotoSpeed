@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -258,20 +259,23 @@ fun SpeedometerGauge(
             // Animated Gauge Needle
             val needleAngle = startAngle + (totalSweep * speedFraction)
             val needleLength = radius - 8.dp.toPx()
-            val needleWidth = 5.dp.toPx()
+            val needleWidth = 4.5.dp.toPx()
 
             rotate(degrees = needleAngle - 90f, pivot = center) {
                 val needlePath = Path().apply {
-                    moveTo(center.x - needleWidth, center.y)
-                    lineTo(center.x, center.y + needleLength)
+                    // Sleek sports needle with subtle counter-balance tail
+                    moveTo(center.x - 2.5.dp.toPx(), center.y - 8.dp.toPx())
+                    lineTo(center.x + 2.5.dp.toPx(), center.y - 8.dp.toPx())
                     lineTo(center.x + needleWidth, center.y)
+                    lineTo(center.x, center.y + needleLength)
+                    lineTo(center.x - needleWidth, center.y)
                     close()
                 }
                 drawPath(
                     path = needlePath,
                     brush = Brush.verticalGradient(
                         colors = listOf(Color.White, speedColor),
-                        startY = center.y,
+                        startY = center.y - 8.dp.toPx(),
                         endY = center.y + needleLength
                     )
                 )
@@ -295,11 +299,12 @@ fun SpeedometerGauge(
             )
         }
 
-        // Center Digital Readout & Status
+        // Center Digital Readout & Status - shifted lower down so the needle and pivot do not obstruct
+        val verticalOffset = (sizeDp * 0.17f).coerceIn(44.dp, 64.dp)
         Column(
             modifier = Modifier
                 .align(Alignment.Center)
-                .padding(top = 16.dp),
+                .offset(y = verticalOffset),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {

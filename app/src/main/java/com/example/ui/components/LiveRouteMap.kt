@@ -157,17 +157,31 @@ fun LiveRouteMap(
             }
 
             // Geographic Coordinate Projection (Mercator-like local flat projection)
-            // 1 degree lat approx 111,000 meters.
-            // Scale factor to map pixels
-            val basePixelsPerDegree = 80000.0 * zoomScale
+            val isAutoFit = !isRecording && routePoints.size > 1
+            val minLat = if (isAutoFit) routePoints.minOf { it.latitude } else 0.0
+            val maxLat = if (isAutoFit) routePoints.maxOf { it.latitude } else 0.0
+            val minLon = if (isAutoFit) routePoints.minOf { it.longitude } else 0.0
+            val maxLon = if (isAutoFit) routePoints.maxOf { it.longitude } else 0.0
+            val midLat = if (isAutoFit) (minLat + maxLat) / 2.0 else currentLat
+            val midLon = if (isAutoFit) (minLon + maxLon) / 2.0 else currentLon
+            val latSpan = if (isAutoFit) (maxLat - minLat).coerceAtLeast(0.0006) else 1.0
+            val lonSpan = if (isAutoFit) (maxLon - minLon).coerceAtLeast(0.0006) else 1.0
+            val cosMid = cos(Math.toRadians(midLat))
+            val usableW = (canvasWidth - 56.dp.toPx()).coerceAtLeast(80f)
+            val usableH = (canvasHeight - 56.dp.toPx()).coerceAtLeast(80f)
+            val autoScale = min(usableW / (lonSpan * cosMid), usableH / latSpan) * zoomScale
+            val liveScale = 80000.0 * zoomScale
 
             fun project(lat: Double, lon: Double): Offset {
-                val dx = (lon - currentLon) * cos(Math.toRadians(currentLat)) * basePixelsPerDegree
-                val dy = -(lat - currentLat) * basePixelsPerDegree
-                return Offset(
-                    x = (center.x + dx).toFloat(),
-                    y = (center.y + dy).toFloat()
-                )
+                return if (isAutoFit) {
+                    val dx = (lon - midLon) * cosMid * autoScale
+                    val dy = -(lat - midLat) * autoScale
+                    Offset((center.x + dx).toFloat(), (center.y + dy).toFloat())
+                } else {
+                    val dx = (lon - currentLon) * cosMid * liveScale
+                    val dy = -(lat - currentLat) * liveScale
+                    Offset((center.x + dx).toFloat(), (center.y + dy).toFloat())
+                }
             }
 
             // Draw Recorded Route Path
@@ -220,6 +234,13 @@ fun LiveRouteMap(
                     )
                 }
 
+                val paint = android.graphics.Paint().apply {
+                    color = TextPrimary.toArgb()
+                    textSize = 10.sp.toPx()
+                    textAlign = android.graphics.Paint.Align.CENTER
+                    isFakeBoldText = true
+                }
+
                 // Draw Start Flag Pin
                 val startScreenPos = project(routePoints.first().latitude, routePoints.first().longitude)
                 drawCircle(
@@ -237,19 +258,38 @@ fun LiveRouteMap(
                     radius = 3.dp.toPx(),
                     center = startScreenPos
                 )
-
-                val paint = android.graphics.Paint().apply {
-                    color = TextPrimary.toArgb()
-                    textSize = 10.sp.toPx()
-                    textAlign = android.graphics.Paint.Align.CENTER
-                    isFakeBoldText = true
-                }
                 drawContext.canvas.nativeCanvas.drawText(
                     "INICIO",
                     startScreenPos.x,
                     startScreenPos.y - 12.dp.toPx(),
                     paint
                 )
+
+                // If not recording, draw Finish Flag Pin
+                if (!isRecording) {
+                    val endScreenPos = project(routePoints.last().latitude, routePoints.last().longitude)
+                    drawCircle(
+                        color = Color.Black,
+                        radius = 9.dp.toPx(),
+                        center = endScreenPos
+                    )
+                    drawCircle(
+                        color = RacingRed,
+                        radius = 7.dp.toPx(),
+                        center = endScreenPos
+                    )
+                    drawCircle(
+                        color = Color.White,
+                        radius = 3.dp.toPx(),
+                        center = endScreenPos
+                    )
+                    drawContext.canvas.nativeCanvas.drawText(
+                        "FIN",
+                        endScreenPos.x,
+                        endScreenPos.y - 12.dp.toPx(),
+                        paint
+                    )
+                }
             }
 
             // Draw Current Motorcycle Location & Orientation Pin
