@@ -114,6 +114,7 @@ fun RouteMapScreen(
             heading = gpsState.headingDegrees,
             currentSpeedKmh = gpsState.currentSpeedKmh,
             routePoints = gpsState.routePoints,
+            sessionBreadcrumbs = gpsState.liveSessionPoints,
             isRecording = gpsState.tripState == TripState.RECORDING,
             showHeatmap = settings.showSpeedHeatmap,
             isInteractive = true,

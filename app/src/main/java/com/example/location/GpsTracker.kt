@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.util.Locale
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.sin
@@ -41,7 +42,7 @@ data class GpsState(
     val avgSpeedKmh: Float = 0f,
     val distanceKm: Double = 0.0,
     val durationSeconds: Long = 0L,
-    val currentLatitude: Double = 19.4326, // Default CDMX or user's GPS
+    val currentLatitude: Double = 19.4326,
     val currentLongitude: Double = -99.1332,
     val altitudeMeters: Double = 0.0,
     val headingDegrees: Float = 0f,
@@ -49,6 +50,7 @@ data class GpsState(
     val hasGpsFix: Boolean = false,
     val tripState: TripState = TripState.IDLE,
     val routePoints: List<RoutePoint> = emptyList(),
+    val liveSessionPoints: List<RoutePoint> = emptyList(), // Breadcrumbs of session even outside recorded trip
     val isSimulationMode: Boolean = false
 )
 
@@ -61,7 +63,8 @@ class GpsTracker(private val context: Context) {
     private val _gpsState = MutableStateFlow(GpsState())
     val gpsState: StateFlow<GpsState> = _gpsState.asStateFlow()
 
-    private var lastKnownLocation: Location? = null
+    private var lastRecordedLocation: Location? = null
+    private var lastSessionLocation: Location? = null
     private var accumulatedDistanceMeters: Double = 0.0
     private var startTimeMillis: Long = 0L
     private var accumulatedDurationSec: Long = 0L
@@ -70,7 +73,8 @@ class GpsTracker(private val context: Context) {
     private var simulationJob: Job? = null
     private val trackerScope = CoroutineScope(Dispatchers.Default)
 
-    private val recordedPoints = mutableListOf<RoutePoint>()
+    private val recordedTripPoints = mutableListOf<RoutePoint>()
+    private val liveSessionPoints = mutableListOf<RoutePoint>()
     private val speedSamples = mutableListOf<Float>()
 
     private val locationCallback = object : LocationCallback() {
@@ -98,9 +102,9 @@ class GpsTracker(private val context: Context) {
         isListening = true
 
         try {
-            val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 800L)
-                .setMinUpdateIntervalMillis(400L)
-                .setMinUpdateDistanceMeters(0.5f)
+            val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 700L)
+                .setMinUpdateIntervalMillis(350L)
+                .setMinUpdateDistanceMeters(0.3f)
                 .build()
 
             fusedLocationClient.requestLocationUpdates(
@@ -109,19 +113,17 @@ class GpsTracker(private val context: Context) {
                 Looper.getMainLooper()
             )
 
-            // Also request last known location immediately
             fusedLocationClient.lastLocation.addOnSuccessListener { loc ->
-                if (loc != null && _gpsState.value.hasGpsFix.not()) {
+                if (loc != null) {
                     handleNewLocation(loc)
                 }
             }
         } catch (e: Exception) {
-            // Fallback to LocationManager
             try {
                 locationManager?.requestLocationUpdates(
                     LocationManager.GPS_PROVIDER,
-                    800L,
-                    0.5f,
+                    700L,
+                    0.3f,
                     legacyLocationListener,
                     Looper.getMainLooper()
                 )
@@ -139,12 +141,25 @@ class GpsTracker(private val context: Context) {
     }
 
     fun startTrip() {
-        recordedPoints.clear()
+        recordedTripPoints.clear()
         speedSamples.clear()
         accumulatedDistanceMeters = 0.0
         accumulatedDurationSec = 0L
         startTimeMillis = System.currentTimeMillis()
         lastResumeTimeMillis = SystemClock.elapsedRealtime()
+        lastRecordedLocation = null
+
+        // Add starting anchor point if current location is valid
+        if (_gpsState.value.hasGpsFix) {
+            val startPoint = RoutePoint(
+                latitude = _gpsState.value.currentLatitude,
+                longitude = _gpsState.value.currentLongitude,
+                speedKmh = _gpsState.value.currentSpeedKmh,
+                timestamp = System.currentTimeMillis(),
+                altitude = _gpsState.value.altitudeMeters
+            )
+            recordedTripPoints.add(startPoint)
+        }
 
         _gpsState.value = _gpsState.value.copy(
             tripState = TripState.RECORDING,
@@ -152,7 +167,14 @@ class GpsTracker(private val context: Context) {
             avgSpeedKmh = 0f,
             distanceKm = 0.0,
             durationSeconds = 0L,
-            routePoints = emptyList()
+            routePoints = recordedTripPoints.toList()
+        )
+
+        // Run persistent foreground service so GPS never dies in background/pocket
+        MotoTrackingService.startService(
+            context = context,
+            speed = "0 km/h",
+            distance = "0.00 km"
         )
 
         startTimer()
@@ -190,6 +212,7 @@ class GpsTracker(private val context: Context) {
         }
         timerJob?.cancel()
         simulationJob?.cancel()
+        MotoTrackingService.stopService(context)
         _gpsState.value = _gpsState.value.copy(
             tripState = TripState.FINISHED,
             currentSpeedKmh = 0f,
@@ -200,10 +223,13 @@ class GpsTracker(private val context: Context) {
     fun resetTrip() {
         timerJob?.cancel()
         simulationJob?.cancel()
-        recordedPoints.clear()
+        recordedTripPoints.clear()
         speedSamples.clear()
         accumulatedDistanceMeters = 0.0
         accumulatedDurationSec = 0L
+        lastRecordedLocation = null
+        MotoTrackingService.stopService(context)
+
         _gpsState.value = _gpsState.value.copy(
             tripState = TripState.IDLE,
             currentSpeedKmh = 0f,
@@ -238,46 +264,83 @@ class GpsTracker(private val context: Context) {
     }
 
     private fun handleNewLocation(location: Location) {
-        if (_gpsState.value.isSimulationMode) return // Ignore actual GPS when simulation is running
+        if (_gpsState.value.isSimulationMode) return
 
-        // Speed calculation: m/s -> km/h
+        val accuracy = if (location.hasAccuracy()) location.accuracy else 15f
+
+        // Discard poor accuracy fixes (> 45m) to avoid crooked lines jumping off roads
+        if (accuracy > 45f && _gpsState.value.hasGpsFix) {
+            return
+        }
+
+        val hasFix = accuracy < 40f
+        val altitude = if (location.hasAltitude()) location.altitude else 0.0
+
         var rawSpeedKmh = if (location.hasSpeed()) {
             location.speed * 3.6f
         } else {
             0f
         }
 
-        // Filter out stationary jitter
-        if (rawSpeedKmh < 1.5f) {
+        // Filter stationary jitter (speeds under 1.2 km/h treated as stopped at red light)
+        if (rawSpeedKmh < 1.2f) {
             rawSpeedKmh = 0f
         }
 
-        val accuracy = if (location.hasAccuracy()) location.accuracy else 10f
-        val hasFix = accuracy < 50f
-        val altitude = if (location.hasAltitude()) location.altitude else 0.0
-        val bearing = if (location.hasBearing()) location.bearing else _gpsState.value.headingDegrees
-
-        var currentDistance = accumulatedDistanceMeters
-        val lastLoc = lastKnownLocation
-
-        if (lastLoc != null && _gpsState.value.tripState == TripState.RECORDING) {
-            val dist = lastLoc.distanceTo(location)
-            // Filter out GPS jumps / unrealistic motorcycle teleport (> 300 km/h)
-            val timeDiffSec = max(0.5f, (location.time - lastLoc.time) / 1000f)
-            val calculatedSpeedKmh = (dist / timeDiffSec) * 3.6f
-
-            if (calculatedSpeedKmh < 300f && dist > 1.0f) {
-                accumulatedDistanceMeters += dist
-                currentDistance = accumulatedDistanceMeters
-            }
+        val bearing = if (location.hasBearing() && rawSpeedKmh > 2f) {
+            location.bearing
+        } else {
+            _gpsState.value.headingDegrees
         }
 
-        lastKnownLocation = location
+        // 1. Maintain Live Session Breadcrumbs (always visible on map so user sees their exact path)
+        val lastSess = lastSessionLocation
+        val sessionDist = if (lastSess != null) lastSess.distanceTo(location) else 10f
 
+        // Record breadcrumb if moved more than 2.5 meters
+        if (sessionDist >= 2.5f || liveSessionPoints.isEmpty()) {
+            val sessionPt = RoutePoint(
+                latitude = location.latitude,
+                longitude = location.longitude,
+                speedKmh = rawSpeedKmh,
+                timestamp = System.currentTimeMillis(),
+                altitude = altitude
+            )
+            liveSessionPoints.add(sessionPt)
+            if (liveSessionPoints.size > 2000) {
+                liveSessionPoints.removeAt(0)
+            }
+            lastSessionLocation = location
+        }
+
+        // 2. Official Trip Recording logic
+        var currentDistance = accumulatedDistanceMeters
         var currentMaxSpeed = _gpsState.value.maxSpeedKmh
         var currentAvgSpeed = _gpsState.value.avgSpeedKmh
 
         if (_gpsState.value.tripState == TripState.RECORDING) {
+            val lastLoc = lastRecordedLocation
+            var shouldRecordPoint = false
+
+            if (lastLoc == null) {
+                shouldRecordPoint = true
+                lastRecordedLocation = location
+            } else {
+                val dist = lastLoc.distanceTo(location)
+                val timeDiffSec = max(0.4f, (location.time - lastLoc.time) / 1000f)
+                val calculatedSpeedKmh = (dist / timeDiffSec) * 3.6f
+
+                // Avoid GPS teleports (> 280 km/h) and avoid piling up duplicate points when standing still
+                if (calculatedSpeedKmh < 280f) {
+                    if (dist >= 2.0f || (rawSpeedKmh > 3f && dist >= 1.0f)) {
+                        accumulatedDistanceMeters += dist
+                        currentDistance = accumulatedDistanceMeters
+                        shouldRecordPoint = true
+                        lastRecordedLocation = location
+                    }
+                }
+            }
+
             if (rawSpeedKmh > currentMaxSpeed) {
                 currentMaxSpeed = rawSpeedKmh
             }
@@ -286,14 +349,16 @@ class GpsTracker(private val context: Context) {
                 currentAvgSpeed = speedSamples.average().toFloat()
             }
 
-            val point = RoutePoint(
-                latitude = location.latitude,
-                longitude = location.longitude,
-                speedKmh = rawSpeedKmh,
-                timestamp = System.currentTimeMillis(),
-                altitude = altitude
-            )
-            recordedPoints.add(point)
+            if (shouldRecordPoint) {
+                val point = RoutePoint(
+                    latitude = location.latitude,
+                    longitude = location.longitude,
+                    speedKmh = rawSpeedKmh,
+                    timestamp = System.currentTimeMillis(),
+                    altitude = altitude
+                )
+                recordedTripPoints.add(point)
+            }
         }
 
         _gpsState.value = _gpsState.value.copy(
@@ -307,7 +372,8 @@ class GpsTracker(private val context: Context) {
             headingDegrees = bearing,
             gpsAccuracyMeters = accuracy,
             hasGpsFix = hasFix,
-            routePoints = recordedPoints.toList()
+            routePoints = recordedTripPoints.toList(),
+            liveSessionPoints = liveSessionPoints.toList()
         )
     }
 
@@ -325,7 +391,6 @@ class GpsTracker(private val context: Context) {
                 delay(800L)
                 if (_gpsState.value.tripState != TripState.RECORDING) break
 
-                // Dynamic acceleration / braking / curves
                 if (simSpeed < targetSpeed) {
                     simSpeed += (3f + (Math.random().toFloat() * 4f))
                     if (simSpeed >= targetSpeed) {
@@ -339,10 +404,9 @@ class GpsTracker(private val context: Context) {
                 }
                 simSpeed = simSpeed.coerceIn(0f, 160f)
 
-                // Move coordinates forward along curved motorcycle path
                 angle += 0.05
                 heading = ((Math.sin(angle) * 45f + 60f).toFloat() + 360f) % 360f
-                val deltaMeters = (simSpeed / 3.6f) * 0.8f // distance moved in 800ms
+                val deltaMeters = (simSpeed / 3.6f) * 0.8f
                 val deltaLat = (deltaMeters * cos(Math.toRadians(heading.toDouble()))) / 111111.0
                 val deltaLon = (deltaMeters * sin(Math.toRadians(heading.toDouble()))) / (111111.0 * cos(Math.toRadians(lat)))
 
@@ -362,7 +426,8 @@ class GpsTracker(private val context: Context) {
                     timestamp = System.currentTimeMillis(),
                     altitude = 2240.0 + Math.sin(angle) * 15.0
                 )
-                recordedPoints.add(point)
+                recordedTripPoints.add(point)
+                liveSessionPoints.add(point)
 
                 _gpsState.value = _gpsState.value.copy(
                     currentSpeedKmh = simSpeed,
@@ -375,7 +440,8 @@ class GpsTracker(private val context: Context) {
                     headingDegrees = heading,
                     gpsAccuracyMeters = 3.5f,
                     hasGpsFix = true,
-                    routePoints = recordedPoints.toList()
+                    routePoints = recordedTripPoints.toList(),
+                    liveSessionPoints = liveSessionPoints.toList()
                 )
             }
         }

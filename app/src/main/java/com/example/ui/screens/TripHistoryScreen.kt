@@ -566,7 +566,7 @@ fun TripDetailDialog(
                     isInteractive = true,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(200.dp)
+                        .height(230.dp)
                 )
 
                 Spacer(modifier = Modifier.height(14.dp))
